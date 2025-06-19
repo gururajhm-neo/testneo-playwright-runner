@@ -51,19 +51,21 @@ jobs:
           pip install playwright==1.48.0
           pip install asyncio GitPython
           
-      - name: Install Playwright browsers and dependencies
+      - name: Install system dependencies for Playwright
         run: |
-          playwright install --with-deps chromium
-          playwright install-deps chromium
-          
-      - name: Verify Playwright installation
-        run: |
-          playwright --version
-          python -c "import playwright; print('Playwright imported successfully')"
-          echo "Checking browser installation:"
-          ls -la ~/.cache/ms-playwright/
-          echo "Browser executable path:"
-          find ~/.cache/ms-playwright/ -name "chrome" -type f 2>/dev/null || echo "Chrome not found"
+          sudo apt-get update
+          sudo apt-get install -y \
+            libnss3 \
+            libnspr4 \
+            libatk-bridge2.0-0 \
+            libdrm2 \
+            libxkbcommon0 \
+            libxcomposite1 \
+            libxdamage1 \
+            libxrandr2 \
+            libgbm1 \
+            libxss1 \
+            libasound2
           
       - name: Check for test scripts
         id: check-scripts
@@ -91,18 +93,14 @@ jobs:
           echo "🏠 Home directory: $HOME"
           echo "📂 Contents:"
           ls -la
-          echo "🔍 Playwright browsers:"
-          ls -la ~/.cache/ms-playwright/ || echo "No browsers found"
-          echo "🔍 Browser executable:"
-          find ~/.cache/ms-playwright/ -name "chrome" -type f 2>/dev/null || echo "Chrome executable not found"
           
       - name: Run Playwright Tests
         if: steps.check-scripts.outputs.scripts_exist == 'true'
         id: run-tests
         env:
           PYTHONUNBUFFERED: 1
-          PLAYWRIGHT_BROWSERS_PATH: ~/.cache/ms-playwright
-          HOME: ~
+          HOME: /home/runner
+          PLAYWRIGHT_BROWSERS_PATH: /home/runner/.cache/ms-playwright
         run: |
           echo "🚀 Starting Playwright test execution..."
           echo "📁 Scripts directory: ${{ steps.check-scripts.outputs.scripts_dir }}"
@@ -110,7 +108,10 @@ jobs:
           echo "🏠 Home directory: $HOME"
           echo "🎭 Playwright browsers path: $PLAYWRIGHT_BROWSERS_PATH"
           
-          # Run the test runner
+          # Create browser cache directory
+          mkdir -p $HOME/.cache/ms-playwright
+          
+          # Run the test runner (it will handle browser installation)
           python runner.py
           
       - name: No tests found
