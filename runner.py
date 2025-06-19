@@ -57,7 +57,7 @@ class TestRunner:
             
             # Run the script
             process = await asyncio.create_subprocess_exec(
-                sys.executable, str(script_path),
+                sys.executable, script_path.name,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=script_path.parent
