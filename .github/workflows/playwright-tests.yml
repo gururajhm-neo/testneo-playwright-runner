@@ -54,12 +54,14 @@ jobs:
       - name: Install Playwright browsers and dependencies
         run: |
           playwright install --with-deps chromium
+          playwright install-deps chromium
           
       - name: Verify Playwright installation
         run: |
           playwright --version
           python -c "import playwright; print('Playwright imported successfully')"
-      
+          ls -la ~/.cache/ms-playwright/
+          
       - name: Check for test scripts
         id: check-scripts
         run: |
@@ -85,6 +87,8 @@ jobs:
           echo "📁 Working directory: $(pwd)"
           echo "📂 Contents:"
           ls -la
+          echo "🔍 Playwright browsers:"
+          ls -la ~/.cache/ms-playwright/ || echo "No browsers found"
           
       - name: Run Playwright Tests
         if: steps.check-scripts.outputs.scripts_exist == 'true'
@@ -117,6 +121,7 @@ jobs:
             videos/
             test-results/
             *.log
+            *.png
           retention-days: 30
       
       - name: Test Results Summary
