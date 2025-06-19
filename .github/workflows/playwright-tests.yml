@@ -1,0 +1,144 @@
+name: Playwright Test Execution
+
+on:
+  push:
+    branches:
+      - main
+      - 'ci-run/*'
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      scripts_directory:
+        description: 'Directory containing test scripts'
+        required: false
+        default: 'scripts'
+
+jobs:
+  playwright-tests:
+    name: Run Playwright Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: [3.9]
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      
+      - name: Cache pip dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+      
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install playwright==1.48.0
+          pip install asyncio GitPython
+          
+      - name: Install Playwright browsers and dependencies
+        run: |
+          playwright install --with-deps chromium
+          
+      - name: Verify Playwright installation
+        run: |
+          playwright --version
+          python -c "import playwright; print('Playwright imported successfully')"
+      
+      - name: Check for test scripts
+        id: check-scripts
+        run: |
+          SCRIPTS_DIR="${{ github.event.inputs.scripts_directory || 'scripts' }}"
+          echo "scripts_dir=${SCRIPTS_DIR}" >> $GITHUB_OUTPUT
+          
+          if [ -d "${SCRIPTS_DIR}" ]; then
+            SCRIPT_COUNT=$(find "${SCRIPTS_DIR}" -name "*.py" -type f | wc -l)
+            echo "script_count=${SCRIPT_COUNT}" >> $GITHUB_OUTPUT
+            echo "scripts_exist=true" >> $GITHUB_OUTPUT
+            echo "Found ${SCRIPT_COUNT} test scripts in ${SCRIPTS_DIR}/"
+            ls -la "${SCRIPTS_DIR}/"
+          else
+            echo "scripts_exist=false" >> $GITHUB_OUTPUT
+            echo "No scripts directory found: ${SCRIPTS_DIR}"
+          fi
+      
+      - name: Display environment info
+        run: |
+          echo "🐍 Python version: $(python --version)"
+          echo "🎭 Playwright version: $(playwright --version)"
+          echo "🖥️  OS: $(uname -a)"
+          echo "📁 Working directory: $(pwd)"
+          echo "📂 Contents:"
+          ls -la
+          
+      - name: Run Playwright Tests
+        if: steps.check-scripts.outputs.scripts_exist == 'true'
+        id: run-tests
+        env:
+          PYTHONUNBUFFERED: 1
+          PLAYWRIGHT_BROWSERS_PATH: ~/.cache/ms-playwright
+        run: |
+          echo "🚀 Starting Playwright test execution..."
+          echo "📁 Scripts directory: ${{ steps.check-scripts.outputs.scripts_dir }}"
+          echo "📊 Number of scripts: ${{ steps.check-scripts.outputs.script_count }}"
+          
+          # Run the test runner
+          python runner.py
+          
+      - name: No tests found
+        if: steps.check-scripts.outputs.scripts_exist == 'false'
+        run: |
+          echo "⚠️  No test scripts found in the specified directory."
+          echo "Please ensure test scripts are pushed to the 'scripts/' directory."
+          exit 0
+          
+      - name: Upload test artifacts
+        if: always() && steps.check-scripts.outputs.scripts_exist == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ github.run_number }}
+          path: |
+            screenshots/
+            videos/
+            test-results/
+            *.log
+          retention-days: 30
+      
+      - name: Test Results Summary
+        if: always() && steps.check-scripts.outputs.scripts_exist == 'true'
+        run: |
+          echo "## 🎭 Playwright Test Results Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch:** \`${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Python Version:** \`${{ matrix.python-version }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Scripts Directory:** \`${{ steps.check-scripts.outputs.scripts_dir }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Number of Scripts:** \`${{ steps.check-scripts.outputs.script_count }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ steps.run-tests.outcome }}" == "success" ]; then
+            echo "✅ **Status:** All tests completed successfully" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ **Status:** Some tests failed or encountered errors" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "📊 **Execution Details:**" >> $GITHUB_STEP_SUMMARY
+          echo "- Workflow Run: [\#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> $GITHUB_STEP_SUMMARY
+          echo "- Triggered by: ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Runner OS: Ubuntu Latest" >> $GITHUB_STEP_SUMMARY
