@@ -42,6 +42,40 @@ class TestRunner:
         except Exception as e:
             print(f"⚠️  Warning: Could not patch headless mode in {script_path.name}: {e}")
     
+    async def ensure_browsers_installed(self):
+        """Ensure Playwright browsers are installed"""
+        try:
+            print("🔍 Checking Playwright browser installation...")
+            
+            # Try to check if browsers are installed
+            result = subprocess.run([
+                sys.executable, "-c", 
+                "from playwright.sync_api import sync_playwright; p = sync_playwright().start(); p.chromium.launch(); p.stop()"
+            ], capture_output=True, text=True, timeout=30)
+            
+            if result.returncode == 0:
+                print("✅ Playwright browsers are already installed and working")
+                return True
+            else:
+                print("⚠️  Playwright browsers not working, installing...")
+                print(f"Error: {result.stderr}")
+                
+                # Install browsers
+                install_result = subprocess.run([
+                    "playwright", "install", "--with-deps", "chromium"
+                ], capture_output=True, text=True, timeout=300)
+                
+                if install_result.returncode == 0:
+                    print("✅ Successfully installed Playwright browsers")
+                    return True
+                else:
+                    print(f"❌ Failed to install browsers: {install_result.stderr}")
+                    return False
+                    
+        except Exception as e:
+            print(f"❌ Error checking/installing browsers: {e}")
+            return False
+    
     async def run_single_script(self, script_path):
         """Run a single test script and capture output"""
         script_name = script_path.name
@@ -57,12 +91,30 @@ class TestRunner:
             
             # Set environment variables for Playwright
             env = os.environ.copy()
-            home_dir = os.path.expanduser("~")
-            env["PLAYWRIGHT_BROWSERS_PATH"] = os.path.join(home_dir, ".cache", "ms-playwright")
-            env["HOME"] = home_dir
             
-            print(f"🏠 Home directory: {home_dir}")
-            print(f"🎭 Playwright browsers path: {env['PLAYWRIGHT_BROWSERS_PATH']}")
+            # Force proper environment setup
+            if "HOME" not in env or not env["HOME"]:
+                env["HOME"] = os.path.expanduser("~")
+            
+            # Set Playwright browser path
+            browser_path = os.path.join(env["HOME"], ".cache", "ms-playwright")
+            env["PLAYWRIGHT_BROWSERS_PATH"] = browser_path
+            
+            print(f"🏠 Home directory: {env['HOME']}")
+            print(f"🎭 Playwright browsers path: {browser_path}")
+            print(f"📁 Working directory: {Path.cwd()}")
+            
+            # Check if browser path exists
+            if os.path.exists(browser_path):
+                print(f"✅ Browser path exists: {browser_path}")
+                # List contents
+                try:
+                    contents = os.listdir(browser_path)
+                    print(f"📂 Browser path contents: {contents}")
+                except Exception as e:
+                    print(f"⚠️  Could not list browser path: {e}")
+            else:
+                print(f"❌ Browser path does not exist: {browser_path}")
             
             # Run the script from repository root
             process = await asyncio.create_subprocess_exec(
@@ -150,6 +202,12 @@ class TestRunner:
         print(f"📁 Scripts Directory: {self.scripts_dir.absolute()}")
         print(f"🕐 Start Time: {self.start_time.strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"🏠 Working Directory: {Path.cwd()}")
+        
+        # Ensure browsers are installed before running tests
+        browsers_ready = await self.ensure_browsers_installed()
+        if not browsers_ready:
+            print("❌ Cannot proceed without working Playwright browsers")
+            return
         
         # Find all Python scripts
         if not self.scripts_dir.exists():
