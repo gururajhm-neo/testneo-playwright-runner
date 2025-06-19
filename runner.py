@@ -10,8 +10,50 @@ import asyncio
 import subprocess
 import json
 import base64
+import requests
 from pathlib import Path
 from datetime import datetime
+
+# Live logging configuration
+BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:5002")
+TEST_RUN_ID = os.getenv("TEST_RUN_ID", None)
+
+class LiveLogger:
+    def __init__(self, test_run_id=None):
+        self.test_run_id = test_run_id
+        self.backend_url = BACKEND_URL
+        
+    async def log(self, step_name: str, message: str, level: str = "info"):
+        """Send live log to backend"""
+        if not self.test_run_id:
+            print(f"[{level.upper()}] {step_name}: {message}")
+            return
+            
+        try:
+            log_data = {
+                "timestamp": datetime.utcnow().isoformat(),
+                "step_name": step_name,
+                "message": message,
+                "level": level
+            }
+            
+            # Send to backend API
+            response = requests.post(
+                f"{self.backend_url}/api/test-runs/{self.test_run_id}/live-log",
+                json=log_data,
+                timeout=5
+            )
+            
+            # Also print to console
+            print(f"[{level.upper()}] {step_name}: {message}")
+            
+        except Exception as e:
+            # Fallback to console logging
+            print(f"[{level.upper()}] {step_name}: {message}")
+            print(f"Warning: Failed to send live log: {e}")
+
+# Global logger instance
+live_logger = LiveLogger(TEST_RUN_ID)
 
 class ScreenshotCapture:
     def __init__(self, script_name):
@@ -60,7 +102,7 @@ class ScreenshotCapture:
 async def run_user_script_with_screenshots(script_path: Path, capture):
     """Execute the user's actual test script directly with screenshot capture"""
     try:
-        print(f"📖 Executing user script directly: {script_path}")
+        await live_logger.log("script_execution", f"Starting execution of {script_path.name}", "info")
         
         # Simply execute the user's script as-is
         process = await asyncio.create_subprocess_exec(
@@ -75,22 +117,23 @@ async def run_user_script_with_screenshots(script_path: Path, capture):
         success = process.returncode == 0
         
         if success:
-            print(f"✅ User script executed successfully")
+            await live_logger.log("script_execution", f"✅ User script executed successfully", "success")
             stdout_msg = stdout.decode('utf-8', errors='ignore')
-            print(f"Output: {stdout_msg}")
+            if stdout_msg.strip():
+                await live_logger.log("script_output", f"Script output: {stdout_msg[:500]}...", "info")
         else:
-            print(f"❌ User script execution failed")
+            await live_logger.log("script_execution", f"❌ User script execution failed", "error")
             if stderr:
                 error_msg = stderr.decode('utf-8', errors='ignore')
-                print(f"Error: {error_msg}")
+                await live_logger.log("script_error", f"Error: {error_msg[:500]}...", "error")
             if stdout:
                 stdout_msg = stdout.decode('utf-8', errors='ignore')
-                print(f"Output: {stdout_msg}")
+                await live_logger.log("script_output", f"Output: {stdout_msg[:500]}...", "info")
         
         return success
         
     except Exception as e:
-        print(f"❌ Error executing user script: {e}")
+        await live_logger.log("script_execution", f"❌ Error executing user script: {e}", "error")
         return False
 
 
@@ -203,8 +246,8 @@ async def save_screenshots_to_results(screenshots_data):
 
 async def main():
     """Main runner function"""
-    print("🚀 Starting Playwright Test Runner - EXECUTING YOUR ACTUAL TEST SCRIPTS")
-    print(f"Working directory: {os.getcwd()}")
+    await live_logger.log("runner_start", "🚀 Starting Playwright Test Runner - EXECUTING YOUR ACTUAL TEST SCRIPTS", "info")
+    await live_logger.log("runner_info", f"Working directory: {os.getcwd()}", "info")
     
     # Create directory structure
     Path("screenshots").mkdir(exist_ok=True)
@@ -212,33 +255,32 @@ async def main():
     Path("videos").mkdir(exist_ok=True)
     
     # Install Playwright
-    print("📦 Installing Playwright browsers...")
+    await live_logger.log("browser_install", "📦 Installing Playwright browsers...", "info")
     try:
         subprocess.run([sys.executable, "-m", "playwright", "install"], check=True, capture_output=True)
         subprocess.run([sys.executable, "-m", "playwright", "install-deps"], check=True, capture_output=True)
-        print("✅ Playwright browsers installed successfully")
+        await live_logger.log("browser_install", "✅ Playwright browsers installed successfully", "success")
     except subprocess.CalledProcessError as e:
-        print(f"⚠️ Browser installation warning: {e}")
+        await live_logger.log("browser_install", f"⚠️ Browser installation warning: {e}", "warning")
     
     # Find test scripts in scripts directory (where backend pushes them)
     scripts_dir = Path("scripts")
     if scripts_dir.exists():
         script_files = list(scripts_dir.glob("*.py"))
         test_scripts = [f for f in script_files if not f.name.startswith("enhanced_")]
-        print(f"📁 Found scripts directory with {len(script_files)} files")
+        await live_logger.log("script_discovery", f"📁 Found scripts directory with {len(script_files)} files", "info")
     else:
         # Fallback to current directory
         script_files = list(Path(".").glob("*.py"))
         test_scripts = [f for f in script_files if f.name not in ["runner.py"] and not f.name.startswith("enhanced_")]
-        print(f"📁 Using current directory with {len(script_files)} files")
+        await live_logger.log("script_discovery", f"📁 Using current directory with {len(script_files)} files", "info")
     
     if not test_scripts:
-        print("❌ No test scripts found!")
+        await live_logger.log("script_discovery", "❌ No test scripts found!", "error")
         sys.exit(1)
     
-    print(f"📋 Found {len(test_scripts)} test scripts:")
-    for script in test_scripts:
-        print(f"  - {script.name}")
+    script_list = ", ".join([script.name for script in test_scripts])
+    await live_logger.log("script_discovery", f"📋 Found {len(test_scripts)} test scripts: {script_list}", "info")
     
     # Run tests
     start_time = datetime.now()
@@ -246,8 +288,13 @@ async def main():
     
     for script_path in test_scripts:
         script_name = script_path.stem
+        await live_logger.log("test_start", f"🔄 Starting test: {script_name}", "info")
         result = await run_test_script(script_path, script_name)
         results.append(result)
+        
+        status_emoji = "✅" if result["status"] == "success" else "❌"
+        await live_logger.log("test_complete", f"{status_emoji} {script_name} completed in {result['duration']:.2f}s", 
+                             "success" if result["status"] == "success" else "error")
     
     end_time = datetime.now()
     total_duration = (end_time - start_time).total_seconds()
