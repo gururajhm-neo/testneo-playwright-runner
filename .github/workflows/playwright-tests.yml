@@ -60,7 +60,10 @@ jobs:
         run: |
           playwright --version
           python -c "import playwright; print('Playwright imported successfully')"
+          echo "Checking browser installation:"
           ls -la ~/.cache/ms-playwright/
+          echo "Browser executable path:"
+          find ~/.cache/ms-playwright/ -name "chrome" -type f 2>/dev/null || echo "Chrome not found"
           
       - name: Check for test scripts
         id: check-scripts
@@ -85,10 +88,13 @@ jobs:
           echo "🎭 Playwright version: $(playwright --version)"
           echo "🖥️  OS: $(uname -a)"
           echo "📁 Working directory: $(pwd)"
+          echo "🏠 Home directory: $HOME"
           echo "📂 Contents:"
           ls -la
           echo "🔍 Playwright browsers:"
           ls -la ~/.cache/ms-playwright/ || echo "No browsers found"
+          echo "🔍 Browser executable:"
+          find ~/.cache/ms-playwright/ -name "chrome" -type f 2>/dev/null || echo "Chrome executable not found"
           
       - name: Run Playwright Tests
         if: steps.check-scripts.outputs.scripts_exist == 'true'
@@ -96,10 +102,13 @@ jobs:
         env:
           PYTHONUNBUFFERED: 1
           PLAYWRIGHT_BROWSERS_PATH: ~/.cache/ms-playwright
+          HOME: ~
         run: |
           echo "🚀 Starting Playwright test execution..."
           echo "📁 Scripts directory: ${{ steps.check-scripts.outputs.scripts_dir }}"
           echo "📊 Number of scripts: ${{ steps.check-scripts.outputs.script_count }}"
+          echo "🏠 Home directory: $HOME"
+          echo "🎭 Playwright browsers path: $PLAYWRIGHT_BROWSERS_PATH"
           
           # Run the test runner
           python runner.py
