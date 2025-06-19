@@ -55,7 +55,7 @@ class TestRunner:
             # Ensure headless mode
             self.ensure_headless_mode(script_path)
             
-            # Run the script
+            # Run the script - FIXED: Use script_path.name instead of str(script_path)
             process = await asyncio.create_subprocess_exec(
                 sys.executable, script_path.name,
                 stdout=asyncio.subprocess.PIPE,
@@ -233,4 +233,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main() 
+    main()
