@@ -55,12 +55,13 @@ class TestRunner:
             # Ensure headless mode
             self.ensure_headless_mode(script_path)
             
-            # Run the script - FIXED: Use script_path.name instead of str(script_path)
+            # Run the script from repository root (not scripts directory)
+            # This ensures Playwright can find the browsers in ~/.cache/ms-playwright
             process = await asyncio.create_subprocess_exec(
-                sys.executable, script_path.name,
+                sys.executable, str(script_path),  # Use full path
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                cwd=script_path.parent
+                cwd=Path.cwd()  # Run from current working directory (repo root)
             )
             
             stdout, stderr = await process.communicate()
@@ -137,8 +138,9 @@ class TestRunner:
     async def run_all_scripts(self):
         """Run all Python scripts in the scripts directory"""
         print(f"\n🎯 TEST RUNNER STARTED")
-        print(f"📁 Scripts Directory: {self.scripts_dir.absolute()}")
+        print(f"�� Scripts Directory: {self.scripts_dir.absolute()}")
         print(f"🕐 Start Time: {self.start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"�� Working Directory: {Path.cwd()}")
         
         # Find all Python scripts
         if not self.scripts_dir.exists():
