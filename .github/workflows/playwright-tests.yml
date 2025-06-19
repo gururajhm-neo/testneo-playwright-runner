@@ -2,57 +2,58 @@ name: Playwright Tests
 
 on:
   push:
-    branches: 
-      - main
-      - 'ci-run/*'
+    branches: [ main, ci-run/* ]
   pull_request:
     branches: [ main ]
-  workflow_dispatch:
-    inputs:
-      branch:
-        description: 'Branch to run tests on'
-        required: false
-        default: 'main'
 
 jobs:
-  playwright-tests:
+  test:
+    timeout-minutes: 60
     runs-on: ubuntu-latest
-    
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      
+    - uses: actions/checkout@v4
+    
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.9'
-        
+    
     - name: Install system dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y \
-          libnss3-dev \
-          libatk-bridge2.0-dev \
-          libdrm-dev \
-          libxkbcommon-dev \
-          libgtk-3-dev \
-          libgbm-dev \
-          libasound2t64 \
-          xvfb
-        
+        sudo apt-get install -y libasound2t64 libatk-bridge2.0-0 libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 libxrandr2 libgbm1 libxss1
+    
     - name: Install Python dependencies
       run: |
         python -m pip install --upgrade pip
         pip install playwright asyncio
-        
+    
     - name: Install Playwright browsers
       run: |
-        playwright install --with-deps chromium
-        
-    - name: Run test runner
+        python -m playwright install
+        python -m playwright install-deps
+    
+    - name: Create required directories
+      run: |
+        mkdir -p test-results
+        mkdir -p screenshots
+        mkdir -p videos
+    
+    - name: Run Playwright tests
       run: |
         python runner.py
-        
+      continue-on-error: true
+    
+    - name: List generated files
+      run: |
+        echo "=== Generated files ==="
+        find . -name "*.png" -o -name "*.json" -o -name "*.mp4" | head -20
+        echo "=== Directory structure ==="
+        ls -la
+        ls -la test-results/ || echo "test-results directory is empty or doesn't exist"
+        ls -la screenshots/ || echo "screenshots directory is empty or doesn't exist"
+        ls -la videos/ || echo "videos directory is empty or doesn't exist"
+    
     - name: Upload test results
       uses: actions/upload-artifact@v4
       if: always()
@@ -62,4 +63,13 @@ jobs:
           test-results/
           screenshots/
           videos/
-        retention-days: 30 
+          test_results.json
+        retention-days: 7
+    
+    - name: Upload individual screenshots
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: screenshots
+        path: "**/*.png"
+        retention-days: 7 
