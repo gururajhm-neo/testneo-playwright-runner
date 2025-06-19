@@ -2,7 +2,7 @@
 """
 Test Runner for Playwright Test Scripts
 Dynamically executes all test scripts from the scripts/ directory
-with proper logging and error handling.
+with proper logging, error handling, and screenshot capture.
 """
 
 import os
@@ -10,8 +10,12 @@ import sys
 import asyncio
 import subprocess
 import glob
+import json
+import base64
 from pathlib import Path
 from datetime import datetime
+import tempfile
+import shutil
 
 
 class TestRunner:
@@ -19,9 +23,11 @@ class TestRunner:
         self.scripts_dir = Path(scripts_dir)
         self.results = []
         self.start_time = datetime.now()
+        self.screenshots_dir = Path("screenshots")
+        self.screenshots_dir.mkdir(exist_ok=True)
         
     def ensure_headless_mode(self, script_path):
-        """Patch headless=False to headless=True in script files"""
+        """Patch headless=False to headless=True in script files and add screenshot capture"""
         try:
             with open(script_path, 'r', encoding='utf-8') as f:
                 content = f.read()
@@ -33,14 +39,55 @@ class TestRunner:
             content = content.replace('"headless": false', '"headless": true')
             content = content.replace("'headless': False", "'headless': True")
             
+            # Add screenshot capture functionality
+            if "async def" in content and "playwright" in content:
+                # Add screenshot capture after page creation
+                if "page = await browser.new_page()" in content:
+                    screenshot_code = f'''
+        # Auto-screenshot capture
+        screenshot_dir = Path("screenshots")
+        screenshot_dir.mkdir(exist_ok=True)
+        script_name = "{script_path.stem}"
+        
+        async def capture_screenshot(step_name):
+            try:
+                timestamp = datetime.now().strftime("%H%M%S")
+                screenshot_path = screenshot_dir / f"{{script_name}}_{{step_name}}_{{timestamp}}.png"
+                await page.screenshot(path=str(screenshot_path), full_page=True)
+                print(f"📸 Screenshot saved: {{screenshot_path}}")
+                return str(screenshot_path)
+            except Exception as e:
+                print(f"⚠️ Screenshot failed: {{e}}")
+                return None
+'''
+                    # Insert the screenshot function after page creation
+                    content = content.replace(
+                        "page = await browser.new_page()",
+                        f"page = await browser.new_page(){screenshot_code}"
+                    )
+                    
+                    # Add screenshots at key points
+                    content = content.replace(
+                        'await page.goto(',
+                        'await capture_screenshot("page_load")\n        await page.goto('
+                    )
+                    content = content.replace(
+                        'await browser.close()',
+                        'await capture_screenshot("final_state")\n        await browser.close()'
+                    )
+                    
+                    # Add datetime import if not present
+                    if "from datetime import datetime" not in content:
+                        content = "from datetime import datetime\nfrom pathlib import Path\n" + content
+            
             # Write back if changed
             if content != original_content:
                 with open(script_path, 'w', encoding='utf-8') as f:
                     f.write(content)
-                print(f"✅ Patched headless mode in {script_path.name}")
+                print(f"✅ Patched headless mode and added screenshots in {script_path.name}")
             
         except Exception as e:
-            print(f"⚠️  Warning: Could not patch headless mode in {script_path.name}: {e}")
+            print(f"⚠️  Warning: Could not patch script {script_path.name}: {e}")
     
     async def ensure_browsers_installed(self):
         """Ensure Playwright browsers are installed"""
@@ -76,9 +123,40 @@ class TestRunner:
             print(f"❌ Error checking/installing browsers: {e}")
             return False
     
+    def collect_screenshots(self, script_name):
+        """Collect screenshots generated during test execution"""
+        screenshots = []
+        try:
+            for screenshot_file in self.screenshots_dir.glob(f"{script_name}_*.png"):
+                try:
+                    # Read and encode screenshot as base64
+                    with open(screenshot_file, 'rb') as f:
+                        screenshot_data = base64.b64encode(f.read()).decode('utf-8')
+                    
+                    # Extract step name from filename
+                    filename_parts = screenshot_file.stem.split('_')
+                    step_name = '_'.join(filename_parts[1:-1]) if len(filename_parts) > 2 else "unknown"
+                    
+                    screenshots.append({
+                        "step_name": step_name,
+                        "filename": screenshot_file.name,
+                        "data": screenshot_data,
+                        "timestamp": screenshot_file.stat().st_mtime
+                    })
+                except Exception as e:
+                    print(f"⚠️ Error processing screenshot {screenshot_file}: {e}")
+            
+            # Sort by timestamp
+            screenshots.sort(key=lambda x: x["timestamp"])
+            
+        except Exception as e:
+            print(f"⚠️ Error collecting screenshots: {e}")
+        
+        return screenshots
+    
     async def run_single_script(self, script_path):
-        """Run a single test script and capture output"""
-        script_name = script_path.name
+        """Run a single test script and capture output with screenshots"""
+        script_name = script_path.stem
         print(f"\n{'='*60}")
         print(f"🚀 RUNNING: {script_name}")
         print(f"{'='*60}")
@@ -86,7 +164,7 @@ class TestRunner:
         start_time = datetime.now()
         
         try:
-            # Ensure headless mode
+            # Ensure headless mode and add screenshot capture
             self.ensure_headless_mode(script_path)
             
             # Set environment variables for Playwright
@@ -134,6 +212,9 @@ class TestRunner:
             stdout_text = stdout.decode('utf-8') if stdout else ""
             stderr_text = stderr.decode('utf-8') if stderr else ""
             
+            # Collect screenshots
+            screenshots = self.collect_screenshots(script_name)
+            
             # Determine success/failure
             success = process.returncode == 0
             status = "✅ PASSED" if success else "❌ FAILED"
@@ -146,6 +227,7 @@ class TestRunner:
                 'return_code': process.returncode,
                 'stdout': stdout_text,
                 'stderr': stderr_text,
+                'screenshots': screenshots,
                 'start_time': start_time,
                 'end_time': end_time
             }
@@ -156,6 +238,7 @@ class TestRunner:
             print(f"\n📊 RESULT: {status}")
             print(f"⏱️  Duration: {duration:.2f} seconds")
             print(f"🔢 Return Code: {process.returncode}")
+            print(f"📸 Screenshots: {len(screenshots)}")
             
             if stdout_text:
                 print(f"\n📤 STDOUT:")
@@ -183,6 +266,7 @@ class TestRunner:
                 'return_code': -1,
                 'stdout': "",
                 'stderr': str(e),
+                'screenshots': [],
                 'start_time': start_time,
                 'end_time': end_time,
                 'error': str(e)
@@ -202,6 +286,7 @@ class TestRunner:
         print(f"📁 Scripts Directory: {self.scripts_dir.absolute()}")
         print(f"🕐 Start Time: {self.start_time.strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"🏠 Working Directory: {Path.cwd()}")
+        print(f"📸 Screenshots Directory: {self.screenshots_dir.absolute()}")
         
         # Ensure browsers are installed before running tests
         browsers_ready = await self.ensure_browsers_installed()
@@ -233,8 +318,37 @@ class TestRunner:
         # Wait for all scripts to complete
         await asyncio.gather(*tasks, return_exceptions=True)
         
+        # Save results with screenshots
+        self.save_results()
+        
         # Print summary
         self.print_summary()
+    
+    def save_results(self):
+        """Save test results including screenshots to JSON file"""
+        try:
+            results_file = Path("test_results.json")
+            with open(results_file, 'w', encoding='utf-8') as f:
+                # Convert datetime objects to strings for JSON serialization
+                serializable_results = []
+                for result in self.results:
+                    serializable_result = result.copy()
+                    serializable_result['start_time'] = result['start_time'].isoformat()
+                    serializable_result['end_time'] = result['end_time'].isoformat()
+                    serializable_results.append(serializable_result)
+                
+                json.dump({
+                    'execution_time': self.start_time.isoformat(),
+                    'total_scripts': len(self.results),
+                    'passed': sum(1 for r in self.results if r['success']),
+                    'failed': sum(1 for r in self.results if not r['success']),
+                    'results': serializable_results
+                }, f, indent=2, ensure_ascii=False)
+            
+            print(f"💾 Results saved to: {results_file.absolute()}")
+            
+        except Exception as e:
+            print(f"⚠️ Error saving results: {e}")
     
     def print_summary(self):
         """Print execution summary"""
@@ -243,6 +357,7 @@ class TestRunner:
         
         passed = sum(1 for r in self.results if r['success'])
         failed = len(self.results) - passed
+        total_screenshots = sum(len(r.get('screenshots', [])) for r in self.results)
         
         print(f"\n{'='*80}")
         print(f"📊 TEST EXECUTION SUMMARY")
@@ -253,6 +368,7 @@ class TestRunner:
         print(f"📜 Total Scripts: {len(self.results)}")
         print(f"✅ Passed: {passed}")
         print(f"❌ Failed: {failed}")
+        print(f"📸 Total Screenshots: {total_screenshots}")
         print(f"📈 Success Rate: {(passed/len(self.results)*100):.1f}%" if self.results else "0%")
         
         print(f"\n📋 DETAILED RESULTS:")
@@ -260,7 +376,8 @@ class TestRunner:
         
         for result in self.results:
             duration_str = f"{result['duration']:.2f}s"
-            print(f"{result['status']:<12} {result['script']:<30} {duration_str:>8}")
+            screenshot_count = len(result.get('screenshots', []))
+            print(f"{result['status']:<12} {result['script']:<30} {duration_str:>8} 📸{screenshot_count}")
         
         print(f"{'='*80}")
         
@@ -275,8 +392,8 @@ class TestRunner:
 
 def main():
     """Main entry point"""
-    print("🎭 Playwright Test Runner")
-    print("=" * 40)
+    print("🎭 Playwright Test Runner with Screenshots")
+    print("=" * 50)
     
     # Check if Playwright is installed
     try:
