@@ -26,7 +26,7 @@ jobs:
     - name: Install Python dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install playwright asyncio
+        pip install playwright asyncio requests
     
     - name: Install Playwright browsers
       run: |
@@ -38,6 +38,14 @@ jobs:
         mkdir -p test-results
         mkdir -p screenshots
         mkdir -p videos
+    
+    - name: Load environment variables
+      run: |
+        if [ -f .env ]; then
+          cat .env >> $GITHUB_ENV
+          echo "Environment variables loaded:"
+          cat .env
+        fi
     
     - name: Run Playwright tests
       run: |
